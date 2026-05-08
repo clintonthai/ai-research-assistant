@@ -15,167 +15,163 @@ from langchain_core.runnables import RunnablePassthrough
 
 load_dotenv()
 
-# ── Page config ───────────────────────────────────────────────────────────────
-st.set_page_config(
-    page_title="AI Research Assistant",
-    page_icon="🔍",
-    layout="centered"
-)
+st.set_page_config(page_title="AI Research Assistant", page_icon="🔍", layout="centered")
 
-# ── Session state ─────────────────────────────────────────────────────────────
-if "retriever" not in st.session_state:
-    st.session_state.retriever = None
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = []
-if "doc_name" not in st.session_state:
-    st.session_state.doc_name = None
+# ── YOUR ORIGINAL UI (restored + safe) ───────────────────────────────────────
+st.markdown("""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
 
+* { font-family: 'Inter', sans-serif; }
 
-# ── Groq model fallback system ────────────────────────────────────────────────
-def get_llm(api_key):
-    models = [
-        "llama-3.1-8b-instant",
-        "llama3-8b-8192"
-    ]
+.stApp {
+    background: linear-gradient(135deg, #E4E7E4, #ABA3AC, #8D828E);
+}
 
-    for m in models:
-        try:
-            return ChatGroq(
-                api_key=api_key,
-                model_name=m,
-                temperature=0.2
-            )
-        except Exception:
-            continue
+/* floating orbs */
+.orb {
+    position: fixed;
+    border-radius: 50%;
+    filter: blur(80px);
+    opacity: 0.18;
+    pointer-events: none;
+    animation: float 8s ease-in-out infinite;
+    z-index: 0;
+}
+.orb1 { width: 340px; height: 340px; background: #a78bfa; top: -80px; left: -80px; }
+.orb2 { width: 260px; height: 260px; background: #c4b5fd; bottom: 60px; right: -60px; }
+.orb3 { width: 200px; height: 200px; background: #818cf8; top: 40%; left: 50%; }
 
-    raise Exception("No working Groq model available for this API key")
+@keyframes float {
+    0%,100% { transform: translateY(0px) scale(1); }
+    50% { transform: translateY(-24px) scale(1.04); }
+}
 
+/* title */
+.title {
+    font-size: 2.4rem;
+    font-weight: 600;
+    text-align: center;
+    background: linear-gradient(135deg, #C3C0C2, #D5D3D5, #E4E7E4);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin-top: 1rem;
+}
 
-# ── Header ─────────────────────────────────────────────────────────────────────
-st.title("🔍 AI Research Assistant")
-st.caption("Upload a PDF and chat with it using Groq + LangChain")
+/* chat bubbles */
+[data-testid="stChatMessage"] {
+    border-radius: 16px;
+    animation: fadeIn 0.3s ease;
+}
 
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* buttons */
+.stButton > button {
+    background: linear-gradient(135deg, #E4E7E4, #C9C2CA, #AD9DB0);
+    color: white;
+    border-radius: 12px;
+    border: none;
+}
+</style>
+
+<div class="orb orb1"></div>
+<div class="orb orb2"></div>
+<div class="orb orb3"></div>
+""", unsafe_allow_html=True)
+
+st.markdown("<div class='title'>✦ AI Research Assistant</div>", unsafe_allow_html=True)
 st.divider()
 
+# ── STATE ────────────────────────────────────────────────────────────────────
+if "retriever" not in st.session_state:
+    st.session_state.retriever = None
+if "chat" not in st.session_state:
+    st.session_state.chat = []
 
-# ── Sidebar ────────────────────────────────────────────────────────────────────
+# ── SIDEBAR ───────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.header("Setup")
 
-    groq_api_key = st.text_input(
-        "Groq API Key",
-        type="password",
-        placeholder="gsk_..."
+    groq_api_key = st.text_input("Groq API Key", type="password")
+    file = st.file_uploader("Upload PDF", type=["pdf"])
+
+    if file and groq_api_key:
+        if st.button("Process"):
+            with st.spinner("Indexing..."):
+                tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+                tmp.write(file.read())
+
+                docs = PyPDFLoader(tmp.name).load()
+                chunks = RecursiveCharacterTextSplitter(
+                    chunk_size=1000, chunk_overlap=150
+                ).split_documents(docs)
+
+                embeddings = HuggingFaceEmbeddings(
+                    model_name="sentence-transformers/all-MiniLM-L6-v2"
+                )
+
+                vector = Chroma.from_documents(chunks, embeddings)
+
+                st.session_state.retriever = vector.as_retriever(k=4)
+                st.session_state.chat = []
+
+                os.unlink(tmp.name)
+                st.success("Ready!")
+
+# ── MODEL ────────────────────────────────────────────────────────────────────
+def get_llm(key):
+    return ChatGroq(
+        api_key=key,
+        model_name="llama-3.1-8b-instant",
+        temperature=0.2
     )
 
-    uploaded_file = st.file_uploader("Upload PDF", type=["pdf"])
-
-    if uploaded_file and groq_api_key:
-        if st.button("Process Document"):
-            with st.spinner("Indexing document..."):
-                try:
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-                        tmp.write(uploaded_file.read())
-                        path = tmp.name
-
-                    loader = PyPDFLoader(path)
-                    docs = loader.load()
-
-                    splitter = RecursiveCharacterTextSplitter(
-                        chunk_size=1000,
-                        chunk_overlap=150
-                    )
-                    chunks = splitter.split_documents(docs)
-
-                    embeddings = HuggingFaceEmbeddings(
-                        model_name="sentence-transformers/all-MiniLM-L6-v2"
-                    )
-
-                    vectorstore = Chroma.from_documents(chunks, embeddings)
-
-                    st.session_state.retriever = vectorstore.as_retriever(
-                        search_kwargs={"k": 4}
-                    )
-
-                    st.session_state.doc_name = uploaded_file.name
-                    st.session_state.chat_history = []
-
-                    os.unlink(path)
-
-                    st.success("Document ready!")
-
-                except Exception as e:
-                    st.error(f"Error: {e}")
-
-    if st.button("Clear Chat"):
-        st.session_state.chat_history = []
-        st.rerun()
-
-
-# ── Main UI ────────────────────────────────────────────────────────────────────
+# ── MAIN UI ───────────────────────────────────────────────────────────────────
 if not groq_api_key:
-    st.info("Enter Groq API key in sidebar to start.")
+    st.info("Enter API key")
 
 elif not st.session_state.retriever:
-    st.info("Upload and process a PDF to begin chatting.")
+    st.info("Upload PDF")
 
 else:
-    st.subheader(f"📄 {st.session_state.doc_name}")
+    for m in st.session_state.chat:
+        with st.chat_message(m["role"]):
+            st.markdown(m["content"])
 
-    # show history
-    for msg in st.session_state.chat_history:
-        with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
+    q = st.chat_input("Ask your document...")
 
-    # chat input (ALWAYS reachable)
-    question = st.chat_input("Ask something about your document...")
-
-    if question:
-        st.session_state.chat_history.append(
-            {"role": "user", "content": question}
-        )
+    if q:
+        st.session_state.chat.append({"role": "user", "content": q})
 
         with st.chat_message("user"):
-            st.markdown(question)
+            st.markdown(q)
 
         with st.chat_message("assistant"):
-            with st.spinner("Thinking..."):
-                try:
-                    llm = get_llm(groq_api_key)
+            llm = get_llm(groq_api_key)
 
-                    prompt = PromptTemplate.from_template("""
-You are a research assistant.
-Answer ONLY using the provided context.
+            prompt = PromptTemplate.from_template("""
+Use only context.
 
-Context:
 {context}
 
-Question:
-{question}
-
-Answer:
+Q: {question}
+A:
 """)
 
-                    def format_docs(docs):
-                        return "\n\n".join(d.page_content for d in docs)
+            def fmt(docs):
+                return "\n\n".join(d.page_content for d in docs)
 
-                    chain = (
-                        {
-                            "context": st.session_state.retriever | format_docs,
-                            "question": RunnablePassthrough()
-                        }
-                        | prompt
-                        | llm
-                        | StrOutputParser()
-                    )
+            chain = (
+                {"context": st.session_state.retriever | fmt,
+                 "question": RunnablePassthrough()}
+                | prompt | llm | StrOutputParser()
+            )
 
-                    answer = chain.invoke(question)
+            ans = chain.invoke(q)
+            st.markdown(ans)
 
-                    st.markdown(answer)
-
-                    st.session_state.chat_history.append(
-                        {"role": "assistant", "content": answer}
-                    )
-
-                except Exception as e:
-                    st.error(str(e))
+            st.session_state.chat.append({"role": "assistant", "content": ans})
