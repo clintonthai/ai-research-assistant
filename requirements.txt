@@ -1,10 +1,14 @@
 streamlit==1.36.0
+
 langchain
 langchain-community
 langchain-groq
 langchain-text-splitters
+
 chromadb==0.5.3
 sentence-transformers
+
 python-dotenv
 pypdf
-protobuf<5
+
+protobuf==4.25.3
