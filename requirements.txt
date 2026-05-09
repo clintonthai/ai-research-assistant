@@ -1,9 +1,15 @@
 streamlit
 python-dotenv
+
 langchain
 langchain-community
 langchain-core
 langchain-groq
-faiss-cpu
+
+chromadb==0.5.3
+protobuf<5
+
 sentence-transformers
-pypdf
+huggingface-hub
+
+numpy<2
