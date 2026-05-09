@@ -6,116 +6,106 @@ from dotenv import load_dotenv
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_community.vectorstores import FAISS
+from langchain_community.vectorstores import Chroma
 
 from langchain_groq import ChatGroq
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
-# ─────────────────────────────────────────────
+# ─────────────────────────────────────────
+# CONFIG
+# ─────────────────────────────────────────
 load_dotenv()
-st.set_page_config(page_title="AI Research Assistant", page_icon="🔍", layout="centered")
+st.set_page_config(page_title="Research Lab V8", page_icon="🧪", layout="centered")
 
-# ── CLEAN UI (your aesthetic preserved) ───────
+# ─────────────────────────────────────────
+# UI (your beige gradient restored)
+# ─────────────────────────────────────────
 st.markdown("""
 <style>
-* { font-family: Inter, sans-serif; }
-
 .stApp {
     background: linear-gradient(135deg, #E4E7E4, #ABA3AC, #8D828E);
 }
 
-/* floating orbs */
-.orb {
-    position: fixed;
-    border-radius: 50%;
-    filter: blur(80px);
-    opacity: 0.18;
-    pointer-events: none;
-    animation: float 8s ease-in-out infinite;
-    z-index: 0;
-}
-.orb1 { width: 340px; height: 340px; background: #a78bfa; top: -80px; left: -80px; }
-.orb2 { width: 260px; height: 260px; background: #c4b5fd; bottom: 60px; right: -60px; }
-.orb3 { width: 200px; height: 200px; background: #818cf8; top: 40%; left: 50%; }
-
-@keyframes float {
-    0%,100% { transform: translateY(0px) scale(1); }
-    50% { transform: translateY(-24px) scale(1.04); }
-}
-
 .title {
-    font-size: 2.4rem;
-    text-align: center;
-    font-weight: 600;
-    background: linear-gradient(135deg, #C3C0C2, #D5D3D5, #E4E7E4);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
+    text-align:center;
+    font-size:2.2rem;
+    font-weight:600;
+    background: linear-gradient(135deg,#C3C0C2,#E4E7E4);
+    -webkit-background-clip:text;
+    -webkit-text-fill-color:transparent;
 }
 
 .chat-bubble {
-    border-radius: 16px;
-    padding: 12px;
+    animation: fadeIn 0.3s ease;
+}
+
+@keyframes fadeIn {
+    from {opacity:0; transform:translateY(6px);}
+    to {opacity:1; transform:translateY(0);}
 }
 </style>
 
-<div class="orb orb1"></div>
-<div class="orb orb2"></div>
-<div class="orb orb3"></div>
+<div class="title">🧪 Research Organization V8</div>
 """, unsafe_allow_html=True)
 
-st.markdown("<div class='title'>✦ AI Research Assistant</div>", unsafe_allow_html=True)
-st.divider()
+# floating orbs
+st.markdown("""
+<div style="position:fixed; width:300px; height:300px; background:#a78bfa;
+filter:blur(90px); opacity:0.15; top:-50px; left:-50px; border-radius:50%"></div>
 
-# ─────────────────────────────────────────────
+<div style="position:fixed; width:250px; height:250px; background:#c4b5fd;
+filter:blur(90px); opacity:0.15; bottom:40px; right:-60px; border-radius:50%"></div>
+""", unsafe_allow_html=True)
+
+# ─────────────────────────────────────────
 # STATE
-# ─────────────────────────────────────────────
-if "db" not in st.session_state:
-    st.session_state.db = None
+# ─────────────────────────────────────────
+if "retriever" not in st.session_state:
+    st.session_state.retriever = None
 
 if "chat" not in st.session_state:
     st.session_state.chat = []
 
-# ─────────────────────────────────────────────
-# SIDEBAR
-# ─────────────────────────────────────────────
+# ─────────────────────────────────────────
+# SIDEBAR (INGESTION)
+# ─────────────────────────────────────────
 with st.sidebar:
-    st.header("⚙️ Setup")
+    st.header("🧠 Lab Control Panel")
 
     api_key = st.text_input("Groq API Key", type="password")
-    pdf = st.file_uploader("Upload PDF", type=["pdf"])
+    pdf = st.file_uploader("Upload Research Paper", type=["pdf"])
 
-    if pdf and api_key:
-        if st.button("Index Document"):
-            with st.spinner("Processing..."):
+    if pdf and api_key and st.button("Index Paper"):
+        with st.spinner("Building knowledge graph..."):
 
-                tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
-                tmp.write(pdf.read())
-                tmp.close()
+            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+            tmp.write(pdf.read())
+            tmp.close()
 
-                docs = PyPDFLoader(tmp.name).load()
+            docs = PyPDFLoader(tmp.name).load()
 
-                chunks = RecursiveCharacterTextSplitter(
-                    chunk_size=1000,
-                    chunk_overlap=150
-                ).split_documents(docs)
+            chunks = RecursiveCharacterTextSplitter(
+                chunk_size=1000,
+                chunk_overlap=150
+            ).split_documents(docs)
 
-                embeddings = HuggingFaceEmbeddings(
-                    model_name="sentence-transformers/all-MiniLM-L6-v2"
-                )
+            embeddings = HuggingFaceEmbeddings(
+                model_name="sentence-transformers/all-MiniLM-L6-v2"
+            )
 
-                db = FAISS.from_documents(chunks, embeddings)
+            db = Chroma.from_documents(chunks, embeddings)
 
-                st.session_state.db = db
-                st.session_state.chat = []
+            st.session_state.retriever = db.as_retriever(search_kwargs={"k": 4})
+            st.session_state.chat = []
 
-                os.unlink(tmp.name)
+            os.unlink(tmp.name)
 
-                st.success("Document ready 🚀")
+            st.success("Knowledge base ready.")
 
-# ─────────────────────────────────────────────
-# LLM (with fallback-safe model)
-# ─────────────────────────────────────────────
+# ─────────────────────────────────────────
+# LLM
+# ─────────────────────────────────────────
 def get_llm(key):
     return ChatGroq(
         api_key=key,
@@ -123,35 +113,42 @@ def get_llm(key):
         temperature=0.2
     )
 
-# ─────────────────────────────────────────────
-# RETRIEVAL
-# ─────────────────────────────────────────────
-def retrieve(query):
-    docs = st.session_state.db.similarity_search(query, k=4)
+prompt = PromptTemplate.from_template("""
+You are a scientific research assistant.
 
-    context = "\n\n".join(
-        f"(Page {d.metadata.get('page', '?')}) {d.page_content}"
-        for d in docs
-    )
+Use ONLY the provided context.
 
-    return context, docs
+Context:
+{context}
 
-# ─────────────────────────────────────────────
-# CHAT UI (ALWAYS STABLE)
-# ─────────────────────────────────────────────
+Question:
+{question}
+
+Answer clearly and concisely.
+Include citations if possible.
+""")
+
+def format_docs(docs):
+    return "\n\n".join(d.page_content for d in docs)
+
+# ─────────────────────────────────────────
+# MAIN CHAT LOOP (ALWAYS ON)
+# ─────────────────────────────────────────
 if not api_key:
-    st.info("Enter Groq API key")
+    st.info("Enter Groq API key to begin.")
 
-elif not st.session_state.db:
-    st.info("Upload PDF and index it")
+elif not st.session_state.retriever:
+    st.info("Upload a PDF and index it.")
 
 else:
-    # render history
+
+    # history
     for m in st.session_state.chat:
         with st.chat_message(m["role"]):
             st.markdown(m["content"])
 
-    question = st.chat_input("Ask your document...")
+    # INPUT ALWAYS VISIBLE
+    question = st.chat_input("Ask your research question...")
 
     if question:
         st.session_state.chat.append({"role": "user", "content": question})
@@ -163,39 +160,19 @@ else:
 
             llm = get_llm(api_key)
 
-            context, docs = retrieve(question)
+            chain = (
+                {
+                    "context": st.session_state.retriever | format_docs,
+                    "question": lambda x: x
+                }
+                | prompt
+                | llm
+                | StrOutputParser()
+            )
 
-            prompt = PromptTemplate.from_template("""
-You are a precise research assistant.
-
-Use ONLY this context:
-{context}
-
-Question:
-{question}
-
-If not found, say you don't know.
-
-Answer clearly and concisely.
-""")
-
-            chain = prompt | llm | StrOutputParser()
-
-            answer = chain.invoke({
-                "context": context,
-                "question": question
-            })
+            answer = chain.invoke(question)
 
             st.markdown(answer)
-
-            # citations
-            pages = sorted({
-                d.metadata.get("page", 0) + 1 for d in docs
-                if d.metadata.get("page") is not None
-            })
-
-            if pages:
-                st.caption(f"📖 Sources: pages {pages}")
 
             st.session_state.chat.append(
                 {"role": "assistant", "content": answer}
